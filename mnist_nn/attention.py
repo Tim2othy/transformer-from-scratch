@@ -44,14 +44,16 @@ class AttentionLayer(Layer):
     # output_size = number of output neurons
     def __init__(self, input_size, output_size):
         super().__init__()
+        # Use head_size = input_size
         self.head = Head(input_size)  # Just one head
-        # Linear projection with numpy
-        self.proj_weights = np.random.rand(input_size, n_embd) - 0.05
-        self.proj_bias = np.zeros(n_embd)
+
+        # Linear projection from head output (input_size) to output_size
+        self.proj_weights = np.random.rand(input_size, output_size) * 0.1 - 0.05
+        self.proj_bias = np.zeros(output_size)
 
     def forward(self, x):
         # Process through the single attention head
         out = self.head.forward(x)
-        # Project back to original dimension
+        # Project to output_size dimension
         out = out @ self.proj_weights + self.proj_bias
         return out
