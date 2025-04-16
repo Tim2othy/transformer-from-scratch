@@ -37,3 +37,21 @@ class Head(Layer):
 
         out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
         return out
+
+
+class MultiHeadAttention(Layer):
+    """multiple heads of self-attention in parallel"""
+
+    def __init__(self, head_size):
+        super().__init__()
+        self.head = Head(head_size)  # Just one head
+        # Linear projection with numpy
+        self.proj_weights = np.random.rand(head_size, n_embd) - 0.05
+        self.proj_bias = np.zeros(n_embd)
+
+    def forward(self, x):
+        # Process through the single attention head
+        out = self.head.forward(x)
+        # Project back to original dimension
+        out = out @ self.proj_weights + self.proj_bias
+        return out
