@@ -39,14 +39,14 @@ class Head(Layer):
         return out
 
 
-class MultiHeadAttention(Layer):
-    """multiple heads of self-attention in parallel"""
-
-    def __init__(self, head_size):
+class AttentionLayer(Layer):
+    # input_size = number of input neurons
+    # output_size = number of output neurons
+    def __init__(self, input_size, output_size):
         super().__init__()
-        self.head = Head(head_size)  # Just one head
+        self.head = Head(input_size)  # Just one head
         # Linear projection with numpy
-        self.proj_weights = np.random.rand(head_size, n_embd) - 0.05
+        self.proj_weights = np.random.rand(input_size, n_embd) - 0.05
         self.proj_bias = np.zeros(n_embd)
 
     def forward(self, x):
