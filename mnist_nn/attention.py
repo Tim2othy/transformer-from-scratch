@@ -11,7 +11,7 @@ class Head(Layer):
     def __init__(self, input_size, head_size):
         super().__init__()
         # Use much smaller initialization to prevent overflow
-        scale = 0.005  # Reduce initialization scale further
+        scale = 0.6  # Reduce initialization scale further
         self.key = np.random.randn(input_size, head_size) * scale
         self.query = np.random.randn(input_size, head_size) * scale
         self.value = np.random.randn(input_size, head_size) * scale
@@ -38,6 +38,7 @@ class Head(Layer):
         input_norm = np.linalg.norm(input)
         if input_norm > 10:  # If norm is too large, normalize
             input = input / (input_norm / 10)
+            # print("had to normalize")
 
         self.x = input  # Save for backprop
 
@@ -260,7 +261,7 @@ class AttentionLayer(Layer):
         input_error = self.head.backward_propagation(head_error, learning_rate)
 
         # If input was 2D, ensure output is also 2D
-        if len(self.input.shape) == 2:
+        if self.input is not None and len(self.input.shape) == 2:
             input_error = input_error.reshape(input_error.shape[0], -1)
 
         # Use much smaller learning rate for attention projection
