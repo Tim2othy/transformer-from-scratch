@@ -11,10 +11,11 @@ class Head(Layer):
 
     def __init__(self, input_size, head_size):
         super().__init__()
-        # Now properly using input_size instead of n_embd
-        self.key = np.random.rand(input_size, head_size) * 0.1 - 0.05
-        self.query = np.random.rand(input_size, head_size) * 0.1 - 0.05
-        self.value = np.random.rand(input_size, head_size) * 0.1 - 0.05
+        # Use smaller initialization to prevent overflow
+        scale = 0.02  # Smaller initialization scale
+        self.key = np.random.randn(input_size, head_size) * scale
+        self.query = np.random.randn(input_size, head_size) * scale
+        self.value = np.random.randn(input_size, head_size) * scale
         self.tril = np.tril(np.ones((block_size, block_size)))
         self.head_size = head_size
 
@@ -25,36 +26,59 @@ class Head(Layer):
         self.v = None
         self.wei = None
 
-    def forward(self, x):
-        # input of size (batch, time-step, channels)
-        # output of size (batch, time-step, head size)
-        B, T, C = x.shape
-        self.x = x  # Save for backprop
+    def forward_propagation(self, input):
+        # Handle 2D input (batch, features)
+        if len(input.shape) == 2:
+            # Reshape to 3D: (batch, 1, features)
+            input = input.reshape(input.shape[0], 1, input.shape[1])
 
-        # Calculate k, q, v
-        k = x @ self.key  # (B,T,hs)
-        q = x @ self.query  # (B,T,hs)
-        v = x @ self.value  # (B,T,hs)
+        # Now proceed with 3D input: (batch, time-step, channels)
+        B, T, C = input.shape
+        self.x = input  # Save for backprop
 
-        # Fix: Actually save the values (missing =)
-        self.k, self.q, self.v = k, q, v  # Save for backprop
+        # Calculate k, q, v with clipping to prevent extreme values
+        k = np.clip(input @ self.key, -100, 100)  # (B,T,hs)
+        q = np.clip(input @ self.query, -100, 100)  # (B,T,hs)
+        v = np.clip(input @ self.value, -100, 100)  # (B,T,hs)
 
-        # compute attention scores ("affinities")
-        wei = (
-            q @ np.transpose(k, (0, 2, 1)) * self.head_size**-0.5
-        )  # (B, T, hs) @ (B, hs, T) -> (B, T, T)
+        # Save the values for backprop
+        self.k, self.q, self.v = k, q, v
+
+        # Fix: compute attention scores with numerical stability
+        # Apply scaling before matrix multiplication
+        scaling = 1.0 / np.sqrt(self.head_size)
+        q_scaled = q * scaling
+
+        # Matrix multiplication with clipping to prevent overflow
+        wei = np.zeros((B, T, T))
+        for b in range(B):
+            wei[b] = q_scaled[b] @ k[b].T  # Compute per batch to avoid overflow
 
         # Apply causal mask
         mask = self.tril[:T, :T]
         wei = np.copy(wei)  # Create a copy to avoid modifying the original tensor
-        wei[:, mask == 0] = -np.inf  # Mask future positions
+        wei[:, mask == 0] = -1e9  # Use finite value instead of -np.inf
 
-        # Softmax across the last dimension
-        wei = softmax(wei)  # Apply softmax across the last dimension
+        # Custom softmax that's more numerically stable
+        # For each row, subtract the maximum value for stability
+        wei_max = np.max(wei, axis=2, keepdims=True)
+        wei_exp = np.exp(wei - wei_max)
+        # Apply mask to set masked positions to zero in exponential space
+        # (Different from setting to -inf in the input)
+        mask_expanded = np.expand_dims(mask, 0).repeat(B, axis=0)
+        wei_exp = wei_exp * mask_expanded
+        wei_sum = np.sum(wei_exp, axis=2, keepdims=True)
+        wei = wei_exp / (
+            wei_sum + 1e-10
+        )  # Add small epsilon to prevent division by zero
+
         self.wei = wei  # Save for backprop
 
-        # perform the weighted aggregation of the values
-        out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
+        # Perform the weighted aggregation of the values
+        out = np.zeros_like(v)
+        for b in range(B):
+            out[b] = wei[b] @ v[b]  # (T, T) @ (T, hs) -> (T, hs)
+
         return out
 
     def backward_propagation(self, output_error, learning_rate):
@@ -150,22 +174,45 @@ class AttentionLayer(Layer):
         self.head_output = None
 
     def forward_propagation(self, input):
+        # Check if we need to reshape the input
+        input_is_2d = len(input.shape) == 2
+
+        # If input is 2D, reshape to 3D for attention processing
+        if input_is_2d:
+            input = input.reshape(input.shape[0], 1, input.shape[1])
+
         # Process through the single attention head
-        out = self.head.forward(input)
+        out = self.head.forward_propagation(input)
         self.head_output = out  # Save for backprop
 
         # Project to output_size dimension
         out = out @ self.proj_weights + self.proj_bias
+
+        # If input was 2D, reshape the output back to 2D
+        if input_is_2d:
+            out = out.reshape(out.shape[0], out.shape[2])
+
         return out
 
     def backward_propagation(self, output_error, learning_rate):
-        # output_error shape: (B, T, output_size)
+        # Check if output_error is 2D and reshape if needed
+        if len(output_error.shape) == 2:
+            # Reshape from (batch, features) to (batch, 1, features)
+            output_error = output_error.reshape(
+                output_error.shape[0], 1, output_error.shape[1]
+            )
+
+        # Now proceed with 3D gradient: (B, T, output_size)
         B, T, _ = output_error.shape
 
         # Fix: Check if head_output is None
         if self.head_output is None:
-            print("Error: head_output is None. Did you run forward() first?")
-            return np.zeros((B, T, self.input_size))  # Return zeros with correct shape
+            print(
+                "Error: head_output is None. Did you run forward_propagation() first?"
+            )
+            return np.zeros(
+                (B, self.input_size)
+            )  # Return zeros with correct shape (2D)
 
         # Gradient for projection weights: dE/dW
         weights_error = np.zeros_like(self.proj_weights)
@@ -184,7 +231,13 @@ class AttentionLayer(Layer):
         # Backpropagate through head
         input_error = self.head.backward_propagation(head_error, learning_rate)
 
-        # Update parameters (similar to FC layer update)
+        # Reshape back to 2D if output_error was 2D
+        if len(output_error.shape) == 3 and output_error.shape[1] == 1:
+            input_error = input_error.reshape(
+                input_error.shape[0], input_error.shape[2]
+            )
+
+        # Update parameters
         self.proj_weights -= learning_rate * weights_error
         self.proj_bias -= learning_rate * bias_error
 
