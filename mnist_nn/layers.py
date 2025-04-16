@@ -1,5 +1,4 @@
 import numpy as np
-
 from layer import Layer
 
 
@@ -64,3 +63,10 @@ class SoftmaxLayer(Layer):
         return (
             output_error  # No gradient update needed for softmax layer in this context
         )
+
+
+def softmax(input):
+    # Compute the softmax output
+    exp_values = np.exp(input - np.max(input, axis=1, keepdims=True))
+    probabilities = exp_values / np.sum(exp_values, axis=1, keepdims=True)
+    return probabilities
