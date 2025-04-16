@@ -9,12 +9,14 @@ block_size = 64
 class Head(Layer):
     """one head of self-attention"""
 
-    def __init__(self, head_size):
+    def __init__(self, input_size, head_size):
         super().__init__()
-        self.key = np.random.rand(n_embd, head_size) * 0.1 - 0.05
-        self.query = np.random.rand(n_embd, head_size) * 0.1 - 0.05
-        self.value = np.random.rand(n_embd, head_size) * 0.1 - 0.05
+        # Now properly using input_size instead of n_embd
+        self.key = np.random.rand(input_size, head_size) * 0.1 - 0.05
+        self.query = np.random.rand(input_size, head_size) * 0.1 - 0.05
+        self.value = np.random.rand(input_size, head_size) * 0.1 - 0.05
         self.tril = np.tril(np.ones((block_size, block_size)))
+        self.head_size = head_size
 
     def forward(self, x):
         # input of size (batch, time-step, channels)
@@ -26,15 +28,16 @@ class Head(Layer):
 
         # compute attention scores ("affinities")
         wei = (
-            q @ np.transpose(k, (0, 2, 1)) * k.shape[-1] ** -0.5
+            q @ np.transpose(k, (0, 2, 1)) * self.head_size**-0.5
         )  # (B, T, hs) @ (B, hs, T) -> (B, T, T)
 
         # Apply causal mask
         mask = self.tril[:T, :T]
+        wei = np.copy(wei)  # Create a copy to avoid modifying the original tensor
         wei[:, mask == 0] = -np.inf  # Mask future positions
-        wei = softmax(wei)
-        # perform the weighted aggregation of the values
+        wei = softmax(wei)  # Apply softmax across the last dimension
 
+        # perform the weighted aggregation of the values
         out = wei @ v  # (B, T, T) @ (B, T, hs) -> (B, T, hs)
         return out
 
@@ -44,11 +47,12 @@ class AttentionLayer(Layer):
     # output_size = number of output neurons
     def __init__(self, input_size, output_size):
         super().__init__()
-        # Use head_size = input_size
-        self.head = Head(input_size)  # Just one head
+        head_size = 16  # Typical head size, can be adjusted
+        # Pass input_size to Head constructor
+        self.head = Head(input_size, head_size)
 
-        # Linear projection from head output (input_size) to output_size
-        self.proj_weights = np.random.rand(input_size, output_size) * 0.1 - 0.05
+        # Linear projection from head_size (not input_size) to output_size
+        self.proj_weights = np.random.rand(head_size, output_size) * 0.1 - 0.05
         self.proj_bias = np.zeros(output_size)
 
     def forward(self, x):
